@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
   BookOpen,
@@ -10,6 +10,12 @@ import {
   Loader2,
   Trash2,
   Edit3,
+  CloudCheck,
+  AlertCircle,
+  CheckCircle2,
+  RotateCcw,
+  Upload,
+  Sparkles,
 } from 'lucide-react';
 import {
   collection,
@@ -18,6 +24,7 @@ import {
   setDoc,
   deleteDoc,
   writeBatch,
+  getDoc,
 } from 'firebase/firestore';
 import { Book, ViewMode } from './types/book';
 import { SAMPLE_BOOKS } from './utils/sampleBooks';
@@ -33,12 +40,14 @@ import { ExportCenterModal } from './components/ExportCenterModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { CreateBookModal } from './components/CreateBookModal';
 import { BookEditorModal } from './components/BookEditorModal';
+import { validateAndSanitizeBookJson } from './utils/bookValidator';
 
 function MainStudioApp() {
   const { user, loading: authLoading } = useAuth();
 
   const [books, setBooks] = useState<Book[]>([]);
   const [booksLoading, setBooksLoading] = useState(true);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'saving' | 'error'>('synced');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -48,11 +57,16 @@ function MainStudioApp() {
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('library');
 
-  // Modals
+  // Modals & Dialogs
   const [exportModalBook, setExportModalBook] = useState<Book | null>(null);
   const [deleteTargetBook, setDeleteTargetBook] = useState<Book | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingBook, setEditingBook] = useState<Book | null>(null);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+
+  // Import Validation Modal State
+  const [importValidationError, setImportValidationError] = useState<string[] | null>(null);
+  const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
 
   // Firestore Sync: Load and synchronize user's books in real-time
   useEffect(() => {
@@ -64,42 +78,64 @@ function MainStudioApp() {
 
     const booksCollectionPath = `users/${user.uid}/books`;
     const booksColRef = collection(db, 'users', user.uid, 'books');
+    const userDocRef = doc(db, 'users', user.uid);
 
-    const unsubscribe = onSnapshot(
-      booksColRef,
-      async (snapshot) => {
-        if (snapshot.empty) {
-          try {
-            const batch = writeBatch(db);
-            SAMPLE_BOOKS.forEach((sample) => {
-              const bRef = doc(db, 'users', user.uid, 'books', sample.id);
-              batch.set(bRef, sample);
-            });
-            await batch.commit();
-          } catch (err) {
-            try {
-              handleFirestoreError(err, OperationType.WRITE, booksCollectionPath);
-            } catch {
-              // Logged
-            }
-          }
-        } else {
+    let isSubscribed = true;
+
+    // Check initialization status first so we NEVER recreate sample books if user deleted them
+    const initAndSubscribe = async () => {
+      try {
+        const userSnap = await getDoc(userDocRef);
+        const hasSeeded = userSnap.exists() && userSnap.data()?.hasSeededSampleBooks === true;
+
+        if (!hasSeeded) {
+          // Check if collection is empty on first ever visit
+          const batch = writeBatch(db);
+          SAMPLE_BOOKS.forEach((sample) => {
+            const bRef = doc(db, 'users', user.uid, 'books', sample.id);
+            batch.set(bRef, sample);
+          });
+          batch.set(userDocRef, { hasSeededSampleBooks: true }, { merge: true });
+          await batch.commit();
+        }
+      } catch (err) {
+        console.warn('Initial seed verification note:', err);
+      }
+
+      if (!isSubscribed) return;
+
+      const unsubscribe = onSnapshot(
+        booksColRef,
+        (snapshot) => {
+          // Load whatever books currently exist in the user's Firestore collection.
+          // If empty, set empty array — NEVER automatically respawn deleted books!
           const loadedBooks: Book[] = snapshot.docs.map((docSnap) => docSnap.data() as Book);
           setBooks(loadedBooks);
           setBooksLoading(false);
+          setCloudSyncStatus('synced');
+        },
+        (error) => {
+          setBooksLoading(false);
+          setCloudSyncStatus('error');
+          try {
+            handleFirestoreError(error, OperationType.LIST, booksCollectionPath);
+          } catch {
+            // Handled
+          }
         }
-      },
-      (error) => {
-        setBooksLoading(false);
-        try {
-          handleFirestoreError(error, OperationType.LIST, booksCollectionPath);
-        } catch {
-          // Logged
-        }
-      }
-    );
+      );
 
-    return () => unsubscribe();
+      return unsubscribe;
+    };
+
+    const promise = initAndSubscribe();
+
+    return () => {
+      isSubscribed = false;
+      promise.then((unsub) => {
+        if (unsub) unsub();
+      });
+    };
   }, [user]);
 
   // Actions
@@ -129,13 +165,16 @@ function MainStudioApp() {
   const handleConfirmDelete = async () => {
     if (!deleteTargetBook || !user) return;
     const docPath = `users/${user.uid}/books/${deleteTargetBook.id}`;
+    setCloudSyncStatus('saving');
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'books', deleteTargetBook.id));
       if (activeBook?.id === deleteTargetBook.id) {
         setActiveBook(null);
         setViewMode('library');
       }
+      setCloudSyncStatus('synced');
     } catch (err) {
+      setCloudSyncStatus('error');
       try {
         handleFirestoreError(err, OperationType.DELETE, docPath);
       } catch {
@@ -149,10 +188,13 @@ function MainStudioApp() {
   const handleBookCreated = async (newBook: Book) => {
     if (!user) return;
     const docPath = `users/${user.uid}/books/${newBook.id}`;
+    setCloudSyncStatus('saving');
     try {
       await setDoc(doc(db, 'users', user.uid, 'books', newBook.id), newBook);
       setActiveBook(newBook);
+      setCloudSyncStatus('synced');
     } catch (err) {
+      setCloudSyncStatus('error');
       try {
         handleFirestoreError(err, OperationType.CREATE, docPath);
       } catch {
@@ -164,12 +206,15 @@ function MainStudioApp() {
   const handleSaveEditedBook = async (updated: Book) => {
     if (!user) return;
     const docPath = `users/${user.uid}/books/${updated.id}`;
+    setCloudSyncStatus('saving');
     try {
       await setDoc(doc(db, 'users', user.uid, 'books', updated.id), updated, { merge: true });
       if (activeBook?.id === updated.id) {
         setActiveBook(updated);
       }
+      setCloudSyncStatus('synced');
     } catch (err) {
+      setCloudSyncStatus('error');
       try {
         handleFirestoreError(err, OperationType.UPDATE, docPath);
       } catch {
@@ -178,9 +223,13 @@ function MainStudioApp() {
     }
   };
 
-  const handleResetLibrary = async () => {
+  // Explicit Seed / Reset action with in-app confirmation
+  const handleExecuteResetLibrary = async () => {
     if (!user) return;
-    if (confirm('Reset your private cloud library back to the default showcase eBooks?')) {
+    setIsResetConfirmOpen(false);
+    setCloudSyncStatus('saving');
+
+    try {
       const batch = writeBatch(db);
       books.forEach((b) => {
         batch.delete(doc(db, 'users', user.uid, 'books', b.id));
@@ -188,28 +237,46 @@ function MainStudioApp() {
       SAMPLE_BOOKS.forEach((sample) => {
         batch.set(doc(db, 'users', user.uid, 'books', sample.id), sample);
       });
+      batch.set(doc(db, 'users', user.uid), { hasSeededSampleBooks: true }, { merge: true });
+      await batch.commit();
+      setCloudSyncStatus('synced');
+    } catch (err) {
+      setCloudSyncStatus('error');
       try {
-        await batch.commit();
-      } catch (err) {
-        try {
-          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/books`);
-        } catch {
-          // Handled
-        }
+        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/books`);
+      } catch {
+        // Handled
       }
     }
   };
 
-  const handleImportJson = async (imported: Book) => {
+  // Import JSON with Strict Schema Validation
+  const handleImportJson = async (rawData: unknown) => {
     if (!user) return;
-    const importedBook = {
-      ...imported,
-      id: `imported-${Date.now()}`,
-    };
-    const docPath = `users/${user.uid}/books/${importedBook.id}`;
+
+    if (rawData && typeof rawData === 'object' && '__error' in (rawData as any)) {
+      setImportValidationError([(rawData as any).__error]);
+      return;
+    }
+
+    const validation = validateAndSanitizeBookJson(rawData);
+
+    if (!validation.valid || !validation.sanitizedBook) {
+      setImportValidationError(validation.errors);
+      return;
+    }
+
+    const bookToSave = validation.sanitizedBook;
+    const docPath = `users/${user.uid}/books/${bookToSave.id}`;
+    setCloudSyncStatus('saving');
+
     try {
-      await setDoc(doc(db, 'users', user.uid, 'books', importedBook.id), importedBook);
+      await setDoc(doc(db, 'users', user.uid, 'books', bookToSave.id), bookToSave);
+      setImportSuccessMessage(`"${bookToSave.title}" was successfully verified and saved to your library.`);
+      setCloudSyncStatus('synced');
+      setTimeout(() => setImportSuccessMessage(null), 4000);
     } catch (err) {
+      setCloudSyncStatus('error');
       try {
         handleFirestoreError(err, OperationType.CREATE, docPath);
       } catch {
@@ -224,8 +291,8 @@ function MainStudioApp() {
       b.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       b.subtitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
       b.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.persona.targetRole.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()));
+      b.persona?.targetRole?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (b.tags && b.tags.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase())));
 
     const matchesCategory =
       categoryFilter === 'all' || b.category.toLowerCase().includes(categoryFilter.toLowerCase());
@@ -233,7 +300,7 @@ function MainStudioApp() {
     return matchesSearch && matchesCategory;
   });
 
-  const categories = ['all', ...Array.from(new Set(books.map((b) => b.category)))];
+  const categories = ['all', ...Array.from(new Set(books.map((b) => b.category).filter(Boolean)))];
 
   // 1. Loading Authentication State
   if (authLoading) {
@@ -241,7 +308,7 @@ function MainStudioApp() {
       <div className="min-h-screen bg-[#faf9f5] flex flex-col items-center justify-center text-stone-900 space-y-3 font-sans">
         <Loader2 className="w-6 h-6 animate-spin text-stone-600" />
         <span className="text-xs font-mono text-stone-500 uppercase tracking-wider">
-          Initializing PageCraft Workbench...
+          Initializing PageCraft Publishing Studio...
         </span>
       </div>
     );
@@ -295,8 +362,42 @@ function MainStudioApp() {
         books={books}
         onOpenCreate={() => setIsCreateOpen(true)}
         onImportJson={handleImportJson}
-        onResetLibrary={handleResetLibrary}
+        onResetLibrary={() => setIsResetConfirmOpen(true)}
       />
+
+      {/* Cloud Sync Status Strip */}
+      <div className="bg-white/80 border-b border-stone-200/60 px-6 lg:px-10 py-1.5 flex items-center justify-between text-[11px] font-mono text-stone-500">
+        <div className="flex items-center gap-2">
+          {cloudSyncStatus === 'saving' ? (
+            <>
+              <Loader2 className="w-3 h-3 animate-spin text-stone-600" />
+              <span>Saving manuscript changes to Firestore...</span>
+            </>
+          ) : cloudSyncStatus === 'error' ? (
+            <>
+              <AlertCircle className="w-3 h-3 text-rose-600" />
+              <span className="text-rose-700 font-medium">Sync issue detected with Firestore</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>Cloud Firestore Active · Real-time persistence</span>
+            </>
+          )}
+        </div>
+
+        <span className="hidden sm:inline text-stone-400">
+          User UID: {user.uid.slice(0, 8)}...
+        </span>
+      </div>
+
+      {/* Import Notification Banner */}
+      {importSuccessMessage && (
+        <div className="mx-6 lg:mx-10 mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{importSuccessMessage}</span>
+        </div>
+      )}
 
       {/* Editorial Workbench Masthead Strip */}
       <section className="bg-white border-b border-stone-200 px-6 lg:px-10 py-8">
@@ -309,7 +410,7 @@ function MainStudioApp() {
               Publications &amp; Manuscripts
             </h1>
             <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-              Curate, preview in 3D, and export multi-page A4 vector PDFs with complete demographic ICP alignment and 4 formatted chapters.
+              Curate, preview in 3D, and export multi-page A4 vector PDFs with demographic ICP alignment and modular chapter architecture.
             </p>
           </div>
 
@@ -392,16 +493,47 @@ function MainStudioApp() {
         {booksLoading ? (
           <div className="py-24 flex flex-col items-center justify-center text-stone-400 gap-3">
             <Loader2 className="w-6 h-6 animate-spin text-stone-600" />
-            <span className="text-xs font-mono">Synchronizing Firestore library...</span>
+            <span className="text-xs font-mono">Synchronizing Firestore cloud library...</span>
+          </div>
+        ) : books.length === 0 ? (
+          /* Empty Library State (Fixed: Never automatically respawns deleted demo books) */
+          <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center space-y-4 max-w-lg mx-auto my-8">
+            <div className="w-12 h-12 rounded-2xl bg-stone-100 text-stone-600 flex items-center justify-center mx-auto shadow-xs">
+              <BookOpen className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-serif font-bold text-stone-900 text-lg">Your Cloud Library is Clean</h3>
+              <p className="text-xs text-stone-500 leading-relaxed">
+                You have no active publications in your private Firestore library. Create your first eBook with our multi-stage pipeline or restore sample monographs.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+              <button
+                onClick={() => setIsCreateOpen(true)}
+                className="w-full sm:w-auto px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-medium transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>Create New Publication</span>
+              </button>
+
+              <button
+                onClick={handleExecuteResetLibrary}
+                className="w-full sm:w-auto px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-stone-500" />
+                <span>Load Sample eBooks</span>
+              </button>
+            </div>
           </div>
         ) : filteredBooks.length === 0 ? (
           <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center space-y-4">
             <div className="w-10 h-10 rounded-xl bg-stone-100 text-stone-500 flex items-center justify-center mx-auto">
               <Search className="w-5 h-5" />
             </div>
-            <h3 className="font-serif font-bold text-stone-900 text-base">No manuscripts found</h3>
+            <h3 className="font-serif font-bold text-stone-900 text-base">No matching manuscripts</h3>
             <p className="text-xs text-stone-500 max-w-sm mx-auto">
-              No publications match your filter criteria. Reset your search or synthesize a new manuscript.
+              No publications match your current filter criteria.
             </p>
             <button
               onClick={() => {
@@ -445,7 +577,7 @@ function MainStudioApp() {
                 <div className="col-span-5 flex items-center gap-3">
                   <div
                     className="w-8 h-11 rounded-xs shrink-0 shadow-xs flex items-center justify-center text-white text-[9px] font-mono font-bold"
-                    style={{ background: book.theme.coverBg }}
+                    style={{ background: book.theme?.coverBg || '#312e81' }}
                   >
                     eB
                   </div>
@@ -460,8 +592,8 @@ function MainStudioApp() {
                 </div>
 
                 <div className="col-span-3 truncate text-stone-600">
-                  <span className="font-medium text-stone-800 block truncate">{book.persona.targetRole}</span>
-                  <span className="text-[11px] text-stone-400 truncate block">{book.persona.industry}</span>
+                  <span className="font-medium text-stone-800 block truncate">{book.persona?.targetRole || 'General'}</span>
+                  <span className="text-[11px] text-stone-400 truncate block">{book.persona?.industry || 'Enterprise'}</span>
                 </div>
 
                 <div className="col-span-2 text-right font-mono text-stone-500 text-xs">
@@ -471,29 +603,36 @@ function MainStudioApp() {
 
                 <div className="col-span-2 flex items-center justify-end gap-1.5">
                   <button
+                    onClick={() => setEditingBook(book)}
+                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
+                    title="Edit Manuscript"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
                     onClick={() => handleOpenReader(book)}
-                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
+                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
                     title="Reader"
                   >
                     <BookOpen className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => handleOpenMockup(book)}
-                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
+                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
                     title="3D Mockup"
                   >
                     <Box className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => handleOpenExport(book)}
-                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
+                    className="p-1.5 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
                     title="Export"
                   >
                     <FileDown className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => handleDeleteRequest(book)}
-                    className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
+                    className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
                     title="Delete"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -504,6 +643,74 @@ function MainStudioApp() {
           </div>
         )}
       </main>
+
+      {/* Import Validation Errors Dialog */}
+      {importValidationError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs font-sans animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full border border-stone-200 p-6 space-y-4 shadow-xl">
+            <div className="flex items-center gap-2.5 text-rose-700 font-semibold text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>Import Schema Validation Errors</span>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed">
+              The uploaded JSON file does not conform to the strict publication schema required by PageCraft:
+            </p>
+
+            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 max-h-48 overflow-y-auto space-y-1.5 font-mono text-[11px] text-rose-800">
+              {importValidationError.map((err, idx) => (
+                <div key={idx} className="flex items-start gap-1.5">
+                  <span className="text-rose-400">•</span>
+                  <span>{err}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setImportValidationError(null)}
+                className="px-4 py-2 bg-stone-900 text-white text-xs font-medium rounded-lg hover:bg-stone-800 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {isResetConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs font-sans animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full border border-stone-200 p-6 space-y-4 shadow-xl">
+            <div className="flex items-center gap-2.5 text-stone-900 font-serif font-bold text-base">
+              <RotateCcw className="w-5 h-5 text-stone-500" />
+              <span>Restore Showcase Publications?</span>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed">
+              This will overwrite your private library with the curated showcase publications across SaaS growth, engineering architecture, and executive productivity.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmOpen(false)}
+                className="px-3.5 py-1.5 bg-white border border-stone-200 text-stone-700 text-xs font-medium rounded-lg hover:bg-stone-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteResetLibrary}
+                className="px-4 py-1.5 bg-stone-900 text-white text-xs font-medium rounded-lg hover:bg-stone-800 cursor-pointer shadow-xs"
+              >
+                Restore Showcase
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       <ExportCenterModal

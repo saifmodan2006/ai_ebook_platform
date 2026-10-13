@@ -120,7 +120,7 @@ export function generateBookPdf(book: Book): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(180, 190, 210);
-  doc.text(`Estimated Read: ${book.readTimeMinutes} mins   •   4 Action Chapters`, marginX + 2, bottomY + 14);
+  doc.text(`Estimated Read: ${book.readTimeMinutes} mins   •   ${(book.chapters || []).length} Chapters`, marginX + 2, bottomY + 14);
 
   // ==========================================
   // PAGE HELPER FUNCTIONS

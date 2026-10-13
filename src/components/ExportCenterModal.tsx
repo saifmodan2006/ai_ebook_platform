@@ -8,8 +8,10 @@ import {
   Database,
   CheckCircle2,
   Copy,
-  ExternalLink,
-  ShieldCheck,
+  BookOpen,
+  FileSpreadsheet,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { Book } from '../types/book';
 import { downloadBookPdf } from '../utils/pdfGenerator';
@@ -17,6 +19,8 @@ import {
   downloadMarkdown,
   downloadPlainText,
   downloadJsonBackup,
+  downloadEpub,
+  downloadDocx,
   generateMarkdown,
   generatePlainText,
 } from '../utils/textExports';
@@ -36,6 +40,8 @@ export const ExportCenterModal: React.FC<ExportCenterModalProps> = ({
 }) => {
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isGeneratingEpub, setIsGeneratingEpub] = useState(false);
+  const [isGeneratingDocx, setIsGeneratingDocx] = useState(false);
   const [previewTab, setPreviewTab] = useState<'none' | 'md' | 'txt' | 'json'>('none');
 
   if (!isOpen || !book) return null;
@@ -53,6 +59,28 @@ export const ExportCenterModal: React.FC<ExportCenterModalProps> = ({
     }, 150);
   };
 
+  const handleDownloadEpub = async () => {
+    setIsGeneratingEpub(true);
+    try {
+      await downloadEpub(book);
+    } catch (err) {
+      console.error('EPUB generation error:', err);
+    } finally {
+      setIsGeneratingEpub(false);
+    }
+  };
+
+  const handleDownloadDocx = async () => {
+    setIsGeneratingDocx(true);
+    try {
+      await downloadDocx(book);
+    } catch (err) {
+      console.error('DOCX generation error:', err);
+    } finally {
+      setIsGeneratingDocx(false);
+    }
+  };
+
   const handleCopy = (text: string, type: string) => {
     navigator.clipboard.writeText(text);
     setCopiedType(type);
@@ -62,7 +90,7 @@ export const ExportCenterModal: React.FC<ExportCenterModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150 font-sans">
       <div
-        className="w-full max-w-3xl bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="export-modal-title"
@@ -71,16 +99,15 @@ export const ExportCenterModal: React.FC<ExportCenterModalProps> = ({
         <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50/50">
           <div>
             <span className="text-xs font-mono uppercase tracking-widest text-stone-400 block">
-              Publishing Hub
+              Publishing Distribution Hub
             </span>
             <h2 id="export-modal-title" className="text-base font-serif font-bold text-stone-900">
-              Export Monograph &amp; Assets
+              Export Monograph &amp; Universal Formats
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-stone-400 hover:text-stone-700 rounded-lg hover:bg-stone-100 transition-colors"
-            aria-label="Close"
+            className="p-1.5 text-stone-400 hover:text-stone-700 rounded-lg hover:bg-stone-100 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -88,206 +115,211 @@ export const ExportCenterModal: React.FC<ExportCenterModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-6">
-          {/* Publication Metadata Strip */}
-          <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/60 flex items-center justify-between text-xs">
-            <div className="space-y-0.5">
-              <span className="font-serif font-semibold text-stone-900 block text-sm">{book.title}</span>
-              <span className="text-stone-500 font-mono">By {book.author} · {book.chapters.length} Chapters</span>
-            </div>
-            <div className="text-right text-stone-500 font-mono text-[11px]">
-              <div>Theme: {book.theme.name}</div>
-              <div>ICP: {book.persona.targetRole}</div>
-            </div>
-          </div>
-
-          {/* Primary Featured: Direct Formatted PDF (jsPDF) */}
-          <div className="p-5 rounded-xl border border-stone-300 bg-white shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2 text-xs font-mono">
-                  <span className="font-semibold text-stone-900">DIRECT VECTOR PDF</span>
-                  <span aria-hidden="true" className="text-stone-300">·</span>
-                  <span className="text-emerald-700 font-medium">Bypasses Iframe Sandbox</span>
-                </div>
-                <h4 className="text-sm font-serif font-bold text-stone-900">
-                  Publication-Ready Multi-Page A4 Document
-                </h4>
-                <p className="text-xs text-stone-600 leading-relaxed max-w-lg">
-                  Generates vector text and shapes in-browser via jsPDF. Includes a full-color theme cover page, running headers with page numbers, formatted Table of Contents, demographic ICP memorandum, and 4 formatted chapters.
+          {/* Book Summary Card */}
+          <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-9 h-12 rounded-xs shadow-xs flex items-center justify-center text-white text-[10px] font-mono font-bold shrink-0"
+                style={{ background: book.theme.coverBg }}
+              >
+                eB
+              </div>
+              <div>
+                <h3 className="font-serif font-bold text-stone-900 text-sm">{book.title}</h3>
+                <p className="text-stone-500 font-sans text-xs">
+                  {book.author} · {book.chapters.length} Chapters · {book.readTimeMinutes} min read
                 </p>
               </div>
-
-              <div className="flex flex-col gap-2 shrink-0 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={handleDownloadPdf}
-                  disabled={isGeneratingPdf}
-                  className="px-4 py-2.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white font-medium text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
-                >
-                  <FileDown className="w-3.5 h-3.5" />
-                  <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download Formatted PDF'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenPrintPreview(book);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 font-medium text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5 text-stone-500" />
-                  <span>Open Print Proof</span>
-                </button>
-              </div>
+            </div>
+            <div className="hidden sm:block text-right">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-stone-400 block">
+                Format
+              </span>
+              <span className="text-xs font-mono font-bold text-stone-700">A4 Vector Document</span>
             </div>
           </div>
 
-          {/* Secondary Formats Grid */}
-          <div>
-            <div className="text-xs font-mono uppercase tracking-wider text-stone-400 mb-3">
-              Source Code &amp; Manuscript Formats
+          {/* Primary Export Actions Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 1. Vector PDF */}
+            <div className="p-4 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-all space-y-3 flex flex-col justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center">
+                    <FileDown className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-mono bg-stone-100 text-stone-600 px-2 py-0.5 rounded font-medium">
+                    Vector A4
+                  </span>
+                </div>
+                <h4 className="font-serif font-bold text-stone-900 text-sm">Direct Vector PDF</h4>
+                <p className="text-xs text-stone-500 leading-relaxed">
+                  Full color cover, running headers, table of contents, and all chapters with vector typography.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+                className="w-full py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isGeneratingPdf ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Rendering...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Download PDF</span>
+                  </>
+                )}
+              </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              {/* Markdown Card */}
-              <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="font-semibold text-stone-900 mb-0.5">Markdown (.md)</div>
-                  <p className="text-stone-500 leading-normal">
-                    Complete manuscript with YAML frontmatter, headings, quotes, and takeaways.
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 pt-2 border-t border-stone-200/60">
-                  <button
-                    onClick={() => downloadMarkdown(book)}
-                    className="flex-1 py-1.5 px-2 bg-stone-200/80 hover:bg-stone-300 text-stone-800 rounded-md font-medium text-[11px] transition-colors flex items-center justify-center gap-1"
-                  >
-                    <FileDown className="w-3 h-3" />
-                    Download
-                  </button>
-                  <button
-                    onClick={() => handleCopy(generateMarkdown(book), 'md')}
-                    className="p-1.5 text-stone-500 hover:text-stone-800 rounded-md hover:bg-stone-200/60 transition-colors"
-                    title="Copy Markdown"
-                  >
-                    {copiedType === 'md' ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setPreviewTab(previewTab === 'md' ? 'none' : 'md')}
-                    className="text-[11px] font-mono text-stone-500 hover:text-stone-900 px-1"
-                  >
-                    {previewTab === 'md' ? 'Hide' : 'View'}
-                  </button>
-                </div>
-              </div>
 
-              {/* Plain Text Card */}
-              <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="font-semibold text-stone-900 mb-0.5">Plain Text (.txt)</div>
-                  <p className="text-stone-500 leading-normal">
-                    Structured ASCII layout with chapter dividers, callouts, and numbered lists.
-                  </p>
+            {/* 2. EPUB Standard */}
+            <div className="p-4 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-all space-y-3 flex flex-col justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center">
+                    <BookOpen className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-mono bg-amber-50 text-amber-700 px-2 py-0.5 rounded font-medium">
+                    EPUB 3
+                  </span>
                 </div>
-                <div className="flex items-center gap-1.5 pt-2 border-t border-stone-200/60">
-                  <button
-                    onClick={() => downloadPlainText(book)}
-                    className="flex-1 py-1.5 px-2 bg-stone-200/80 hover:bg-stone-300 text-stone-800 rounded-md font-medium text-[11px] transition-colors flex items-center justify-center gap-1"
-                  >
-                    <FileDown className="w-3 h-3" />
-                    Download
-                  </button>
-                  <button
-                    onClick={() => handleCopy(generatePlainText(book), 'txt')}
-                    className="p-1.5 text-stone-500 hover:text-stone-800 rounded-md hover:bg-stone-200/60 transition-colors"
-                    title="Copy Text"
-                  >
-                    {copiedType === 'txt' ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setPreviewTab(previewTab === 'txt' ? 'none' : 'txt')}
-                    className="text-[11px] font-mono text-stone-500 hover:text-stone-900 px-1"
-                  >
-                    {previewTab === 'txt' ? 'Hide' : 'View'}
-                  </button>
-                </div>
+                <h4 className="font-serif font-bold text-stone-900 text-sm">EPUB eBook (.epub)</h4>
+                <p className="text-xs text-stone-500 leading-relaxed">
+                  Universal reflowable eBook compatible with Apple Books, Kindle, Kobo, and e-readers.
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={handleDownloadEpub}
+                disabled={isGeneratingEpub}
+                className="w-full py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isGeneratingEpub ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Packaging EPUB...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Download EPUB</span>
+                  </>
+                )}
+              </button>
+            </div>
 
-              {/* JSON Backup Card */}
-              <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="font-semibold text-stone-900 mb-0.5">JSON Backup (.json)</div>
-                  <p className="text-stone-500 leading-normal">
-                    Complete schema backup including theme palettes, ICP persona, and chapters.
-                  </p>
+            {/* 3. Microsoft Word DOCX */}
+            <div className="p-4 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-all space-y-3 flex flex-col justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center">
+                    <FileSpreadsheet className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-medium">
+                    Word .docx
+                  </span>
                 </div>
-                <div className="flex items-center gap-1.5 pt-2 border-t border-stone-200/60">
-                  <button
-                    onClick={() => downloadJsonBackup(book)}
-                    className="flex-1 py-1.5 px-2 bg-stone-200/80 hover:bg-stone-300 text-stone-800 rounded-md font-medium text-[11px] transition-colors flex items-center justify-center gap-1"
-                  >
-                    <FileDown className="w-3 h-3" />
-                    Download
-                  </button>
-                  <button
-                    onClick={() => handleCopy(JSON.stringify(book, null, 2), 'json')}
-                    className="p-1.5 text-stone-500 hover:text-stone-800 rounded-md hover:bg-stone-200/60 transition-colors"
-                    title="Copy JSON"
-                  >
-                    {copiedType === 'json' ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setPreviewTab(previewTab === 'json' ? 'none' : 'json')}
-                    className="text-[11px] font-mono text-stone-500 hover:text-stone-900 px-1"
-                  >
-                    {previewTab === 'json' ? 'Hide' : 'View'}
-                  </button>
-                </div>
+                <h4 className="font-serif font-bold text-stone-900 text-sm">Microsoft Word (.docx)</h4>
+                <p className="text-xs text-stone-500 leading-relaxed">
+                  Fully editable word document with heading styles, pull quotes, and callout sections.
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={handleDownloadDocx}
+                disabled={isGeneratingDocx}
+                className="w-full py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isGeneratingDocx ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Formatting Word...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Download DOCX</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
 
-          {/* Collapsible Source Code Preview Pane */}
-          {previewTab !== 'none' && (
-            <div className="p-4 rounded-xl bg-stone-900 text-stone-200 font-mono text-xs overflow-x-auto max-h-60 space-y-2 border border-stone-800">
-              <div className="flex items-center justify-between text-stone-400 pb-2 border-b border-stone-800 text-[11px]">
-                <span>Preview: {previewTab.toUpperCase()} Output</span>
-                <button onClick={() => setPreviewTab('none')} className="hover:text-white">
-                  Close
-                </button>
-              </div>
-              <pre className="whitespace-pre-wrap leading-relaxed">
-                {previewTab === 'md'
-                  ? generateMarkdown(book)
-                  : previewTab === 'txt'
-                  ? generatePlainText(book)
-                  : JSON.stringify(book, null, 2)}
-              </pre>
+          {/* Secondary Formats & Proofing */}
+          <div className="pt-2 border-t border-stone-200 space-y-3">
+            <span className="text-xs font-mono uppercase tracking-wider text-stone-400 block font-medium">
+              Secondary Formats &amp; Print Proofing
+            </span>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenPrintPreview(book);
+                }}
+                className="p-3 text-left bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-xl transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <Printer className="w-4 h-4 text-stone-600" />
+                <div className="overflow-hidden">
+                  <div className="text-xs font-semibold text-stone-900 truncate">Print Proof</div>
+                  <div className="text-[10px] text-stone-400 font-mono">Interactive</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => downloadMarkdown(book)}
+                className="p-3 text-left bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-xl transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <FileCode className="w-4 h-4 text-stone-600" />
+                <div className="overflow-hidden">
+                  <div className="text-xs font-semibold text-stone-900 truncate">Markdown</div>
+                  <div className="text-[10px] text-stone-400 font-mono">.md with YAML</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => downloadPlainText(book)}
+                className="p-3 text-left bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-xl transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <FileText className="w-4 h-4 text-stone-600" />
+                <div className="overflow-hidden">
+                  <div className="text-xs font-semibold text-stone-900 truncate">Plain Text</div>
+                  <div className="text-[10px] text-stone-400 font-mono">.txt ASCII</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => downloadJsonBackup(book)}
+                className="p-3 text-left bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-xl transition-all cursor-pointer flex items-center gap-2.5"
+              >
+                <Database className="w-4 h-4 text-stone-600" />
+                <div className="overflow-hidden">
+                  <div className="text-xs font-semibold text-stone-900 truncate">JSON Backup</div>
+                  <div className="text-[10px] text-stone-400 font-mono">Full Restore</div>
+                </div>
+              </button>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-between text-xs text-stone-500">
-          <span className="font-mono text-[11px]">Rendered locally in browser via jsPDF</span>
+        <div className="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-between text-xs text-stone-500 font-mono">
+          <span>Vector and reflowable exports generate client-side</span>
           <button
             type="button"
             onClick={onClose}
-            className="px-3.5 py-1.5 rounded-lg border border-stone-300 bg-white hover:bg-stone-50 text-stone-800 font-medium text-xs transition-colors"
+            className="px-4 py-1.5 bg-white border border-stone-300 text-stone-700 font-medium rounded-lg hover:bg-stone-50 transition-colors cursor-pointer"
           >
-            Close Hub
+            Close
           </button>
         </div>
       </div>

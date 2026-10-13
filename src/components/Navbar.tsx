@@ -1,10 +1,9 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   Upload,
   RotateCcw,
   LogOut,
   Plus,
-  BookOpen,
 } from 'lucide-react';
 import { Book } from '../types/book';
 import { useAuth } from '../context/AuthContext';
@@ -12,7 +11,7 @@ import { useAuth } from '../context/AuthContext';
 interface NavbarProps {
   books: Book[];
   onOpenCreate: () => void;
-  onImportJson: (imported: Book) => void;
+  onImportJson: (rawData: unknown) => void;
   onResetLibrary: () => void;
 }
 
@@ -23,7 +22,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onResetLibrary,
 }) => {
   const { user, logout } = useAuth();
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -33,13 +32,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (parsed.title && parsed.chapters) {
-          onImportJson(parsed);
-        } else {
-          alert('Invalid eBook JSON structure: missing title or chapters.');
-        }
-      } catch {
-        alert('Failed to parse uploaded JSON file.');
+        onImportJson(parsed);
+      } catch (err: any) {
+        onImportJson({ __error: 'Failed to parse JSON file: Syntax error in file content.' });
       }
     };
     reader.readAsText(file);
@@ -64,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </a>
         </div>
 
-        {/* Zone 2: Editorial Ledger / Metrics (Unboxed Text with Separators) */}
+        {/* Zone 2: Editorial Ledger / Metrics */}
         <div className="hidden md:flex items-center gap-3 text-xs text-stone-500 font-mono">
           <span>{books.length} publications</span>
           <span aria-hidden="true" className="text-stone-300">·</span>
@@ -90,14 +85,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="Import JSON backup"
           >
             <Upload className="w-3.5 h-3.5 text-stone-400" />
-            <span className="hidden sm:inline">Import</span>
+            <span className="hidden sm:inline">Import JSON</span>
           </button>
 
           <button
             type="button"
             onClick={onResetLibrary}
             className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
-            title="Reset library to default publications"
+            title="Restore showcase sample publications"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
