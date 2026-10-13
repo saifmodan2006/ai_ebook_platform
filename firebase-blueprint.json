@@ -1,0 +1,47 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile in the application",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Display name" },
+        "photoURL": { "type": "string", "description": "Avatar photo URL" },
+        "createdAt": { "type": "string", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Book": {
+      "title": "Book",
+      "description": "Publication or lead magnet belonging to a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique book identifier" },
+        "title": { "type": "string", "description": "Book title" },
+        "subtitle": { "type": "string", "description": "Book subtitle" },
+        "author": { "type": "string", "description": "Book author" },
+        "category": { "type": "string", "description": "Category or topic" },
+        "tags": { "type": "array", "description": "List of tags" },
+        "readTimeMinutes": { "type": "number", "description": "Estimated read time in minutes" },
+        "themeId": { "type": "string", "description": "Theme palette ID" },
+        "theme": { "type": "object", "description": "Theme styling details" },
+        "persona": { "type": "object", "description": "Demographic ICP persona" },
+        "chapters": { "type": "array", "description": "4 formatted chapters" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "title", "author", "chapters"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile document"
+    },
+    "/users/{userId}/books/{bookId}": {
+      "schema": "Book",
+      "description": "User personal eBook and lead magnet publications"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "PageCraft - AI eBook & Lead Magnet Studio",
+  "description": "Create, read, visualize in 3D, and export publication-ready eBooks and Lead Magnets with direct vector PDF generation, reader mode, and 3D mockups.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
