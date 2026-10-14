@@ -32,7 +32,5 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 // Export Express app as Vercel serverless function
-export default function handler(req: any, res: any) {
-  return app(req, res);
-}
+export default app;
 
