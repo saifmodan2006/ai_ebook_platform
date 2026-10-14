@@ -2,28 +2,60 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import fs from 'node:fs';
+import path from 'node:path';
 import { checkAndConsumeUserQuota, getQuotaBackendInfo } from './quotaService';
 
 const router = Router();
 
-// Initialize Firebase Admin SDK for cryptographic token verification
-const adminApp =
-  getApps().length === 0
-    ? initializeApp({ projectId: firebaseConfig.projectId })
-    : getApps()[0];
+// Resilient Firebase Project ID resolution without bare JSON import (Node ESM safe)
+function getFirebaseProjectId(): string {
+  if (process.env.FIREBASE_PROJECT_ID) return process.env.FIREBASE_PROJECT_ID;
+  if (process.env.VITE_FIREBASE_PROJECT_ID) return process.env.VITE_FIREBASE_PROJECT_ID;
+  try {
+    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (parsed.projectId) return parsed.projectId;
+    }
+  } catch {
+    // Fall back to default project ID
+  }
+  return 'idyllic-striker-463908-b5';
+}
 
-const adminAuth = getAuth(adminApp);
+const FIREBASE_PROJECT_ID = getFirebaseProjectId();
 
-// Initialize Gemini Client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Lazy-initialized Firebase Admin SDK
+let adminAuthInstance: any = null;
+function getAdminAuth() {
+  if (!adminAuthInstance) {
+    try {
+      const adminApp =
+        getApps().length === 0
+          ? initializeApp({ projectId: FIREBASE_PROJECT_ID })
+          : getApps()[0];
+      adminAuthInstance = getAuth(adminApp);
+    } catch (err: any) {
+      console.warn('[Firebase Admin] Initialization warning:', err?.message || err);
+      return null;
+    }
+  }
+  return adminAuthInstance;
+}
+
+// Resilient Gemini Client getter
+function getGeminiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  return new GoogleGenAI({
+    apiKey: apiKey || '',
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
     },
-  },
-});
+  });
+}
 
 // Extend Express Request with verified user
 export interface AuthenticatedRequest extends Request {
@@ -51,10 +83,10 @@ router.get('/health', (_req: Request, res: Response) => {
   return res.json({
     status: 'ok',
     service: 'pagecraft-editorial-api',
-    projectId: firebaseConfig.projectId,
-    version: '2.1.0',
+    projectId: FIREBASE_PROJECT_ID,
+    version: '2.1.1',
     timestamp: new Date().toISOString(),
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
     quotaBackend: getQuotaBackendInfo(),
   });
 });
@@ -87,7 +119,15 @@ async function requireAuthToken(req: AuthenticatedRequest, res: Response, next: 
   }
 
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
+    const auth = getAdminAuth();
+    if (!auth) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase Authentication service is temporarily unavailable.',
+        code: 'auth/service-unavailable',
+      });
+    }
+    const decodedToken = await auth.verifyIdToken(token);
     req.user = {
       uid: decodedToken.uid,
       email: decodedToken.email,
@@ -98,11 +138,19 @@ async function requireAuthToken(req: AuthenticatedRequest, res: Response, next: 
   } catch (err: any) {
     console.error('Cryptographic token verification failed:', err?.code, err?.message);
     return res.status(401).json({
+      success: false,
       error: `Authentication failed: ${err?.message || 'Invalid or expired Firebase ID token.'}`,
       code: err?.code || 'auth/invalid-token',
     });
   }
 }
+
+// Resilient proxy so existing ai.models calls instantiate dynamically
+const ai = {
+  get models() {
+    return getGeminiClient().models;
+  },
+};
 
 // Shared Per-User Quota and Rate Limiting Middleware
 async function userQuotaLimiter(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -533,9 +581,20 @@ Tone of Voice: ${tone}`;
   } catch (error: any) {
     console.error('Error generating eBook via Gemini:', error);
     return res.status(500).json({
+      success: false,
       error: error?.message || 'Failed to generate eBook via Gemini API',
     });
   }
+});
+
+// Guaranteed JSON 500 handler for any unhandled errors in router
+router.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[API Router Unhandled Error]:', err);
+  return res.status(500).json({
+    success: false,
+    error: err?.message || 'Internal server error occurred.',
+    service: 'pagecraft-editorial-api',
+  });
 });
 
 export default router;

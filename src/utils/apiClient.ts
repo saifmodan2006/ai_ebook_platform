@@ -59,10 +59,18 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 async function handleApiResponse<T>(response: Response): Promise<T> {
   let data: any;
+  const rawText = await response.text();
   try {
-    data = await response.json();
+    data = JSON.parse(rawText);
   } catch {
-    throw new Error(`Server returned ${response.status} ${response.statusText} with non-JSON response.`);
+    const cleanPreview = rawText
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+    throw new Error(
+      `Server error (${response.status} ${response.statusText || 'Error'}): ${cleanPreview || 'The server returned an unexpected non-JSON response. Please check deployment logs.'}`
+    );
   }
 
   if (!response.ok || !data.success) {
